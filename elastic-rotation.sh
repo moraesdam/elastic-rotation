@@ -90,7 +90,7 @@ echo "$(date) Starting $0 with params: ${PARAMS}"
 
 if [[ "${REPOSITORY}" = "DISABLED" ]]; then
     DISABLE_SNAPSHOTS=true
-    echo "Info: Snapshots are disabled. Old indices will be rotated without being backed up."
+    echo "WARNING: Snapshots are disabled. OLD INDICES WILL BE DELETED WITHOUT BEING BACKED UP!"
 else
     DISABLE_SNAPSHOTS=false
 fi
