@@ -1,0 +1,10 @@
+#!/bin/sh
+
+/path/to/elastic-rotation.sh --url https://<elasticsearch-url> --repository <snapshot-repository> --index-prefix logstash- --index-age <days> > /var/log/elastic-rotation.log 2>&1
+
+EXITVALUE=$?
+if [ $EXITVALUE != 0 ]; then
+    /usr/bin/logger -t elastic-rotation "ALERT exited abnormally with [$EXITVALUE]"
+fi
+exit 0
+
