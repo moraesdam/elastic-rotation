@@ -22,6 +22,9 @@ Must be called with ALL the following parameters:
     --repository    snapshot repository or 'DISABLED' to disable snapshotting
     --index-prefix  index pattern to be rotated
     --index-age     days to keep indices - the older ones will be deleted
+
+With "--repository DISABLED", old indices will just be closed instead of being
+ snapshotted and deleted.
 EOF
 }
 
@@ -40,6 +43,12 @@ function snapshotIndex {
 function deleteIndex {
     local index=$1
     local status=$(curl -s -XDELETE "${BASE_URL}/${index}")
+    echo ${status}
+}
+
+function closeIndex {
+    local index=$1
+    local status=$(curl -s -XPOST "${BASE_URL}/${index}/_close")
     echo ${status}
 }
 
@@ -90,12 +99,14 @@ echo "$(date) Starting $0 with params: ${PARAMS}"
 
 if [[ "${REPOSITORY}" = "DISABLED" ]]; then
     DISABLE_SNAPSHOTS=true
-    echo "WARNING: Snapshots are disabled. OLD INDICES WILL BE DELETED WITHOUT BEING BACKED UP!"
+    echo "Info: Snapshots are disabled. Old indices will just be closed."
 else
     DISABLE_SNAPSHOTS=false
 fi
 
 INDICES=$(curl -s -k -XGET "${BASE_URL}/_cat/indices/${INDEX_PREFIX}*?h=index" | sort)
+
+INDEX_MAX_AGE=$(date +%s --date="today - ${INDEX_MAX_AGE} days")
 
 if [[ ! ${DISABLE_SNAPSHOTS} ]]; then
 
@@ -140,29 +151,43 @@ if [[ ! ${DISABLE_SNAPSHOTS} ]]; then
         done
     done
 
-fi # end if [[ ! ${DISABLE_SNAPSHOTS} ]]
-
-# --------------=[Delete Old Indices]=------------------
-index_max_age=$(date +%s --date="today - ${INDEX_MAX_AGE} days")
-
-# check if index has a snapshot and deletes the index if it is too old
-for index in ${INDICES[@]}
-do 
-    # https://stackoverflow.com/questions/3685970/check-if-an-array-contains-a-value
-    if [[ "${SNAPSHOTS[@]}" =~ "${index}" ]] || [[ ${DISABLE_SNAPSHOTS} ]]; then
-
-        index_creation=$(( $(getIndexMetadata ${index} "creation_date") / 1000 ))
-        if [[ ${index_creation} -lt ${index_max_age} ]]; then
-            echo "Deleting old index already snapshotted: ${index}"
-            status=$(deleteIndex ${index})
-            if [ "$status" != '{"acknowledged":true}' ]; then
-                echo "ERROR: ${index} delete failed!" >/dev/stderr
+    # --------------=[Delete Old Indices]=------------------
+    
+    # check if index has a snapshot and deletes the index if it is too old
+    for index in ${INDICES[@]}
+    do 
+        # https://stackoverflow.com/questions/3685970/check-if-an-array-contains-a-value
+        if [[ "${SNAPSHOTS[@]}" =~ "${index}" ]]; then
+    
+            index_creation=$(( $(getIndexMetadata ${index} "creation_date") / 1000 ))
+            if [[ ${index_creation} -lt ${INDEX_MAX_AGE} ]]; then
+                echo "Deleting old index already snapshotted: ${index}"
+                status=$(deleteIndex ${index})
+                if [ "$status" != '{"acknowledged":true}' ]; then
+                    echo "ERROR: ${index} delete failed!" >/dev/stderr
+                fi
             fi
         fi
-    fi
-done
+    done
+    
+    # TODO: purge old snapshots?
+    #snapshot_max_age=$(date +%s --date="today - ${DAYS_TO_KEEP_SNAPSHOT} days")
 
-# TODO: purge old snapshots?
-#snapshot_max_age=$(date +%s --date="today - ${DAYS_TO_KEEP_SNAPSHOT} days")
+else
+    # --------------=[Close Old Indices]=------------------
+    for index in ${INDICES[@]}
+    do 
+        index_creation=$(( $(getIndexMetadata ${index} "creation_date") / 1000 ))
+        if [[ ${index_creation} -lt ${INDEX_MAX_AGE} ]]; then
+            echo "Closing old index: ${index}"
+            status=$(closeIndex ${index})
+            if [ "$status" != '{"acknowledged":true}' ]; then
+                echo "ERROR: ${index} close failed!" >/dev/stderr
+            fi
+        fi
+    done
+
+fi # end if [[ ! ${DISABLE_SNAPSHOTS} ]]
+
 
 echo "$(date) - Done"
