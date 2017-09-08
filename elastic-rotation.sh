@@ -19,7 +19,7 @@ For a given cluster and a snapshot repository, make snapshots of daily indices
 
 Must be called with ALL the following parameters:
     --url           elasticsearch url, eg. https://<host>:<port>
-    --repository    snapshot repository
+    --repository    snapshot repository or 'DISABLED' to disable snapshotting
     --index-prefix  index pattern to be rotated
     --index-age     days to keep indices - the older ones will be deleted
 EOF
@@ -88,50 +88,59 @@ fi
 
 echo "$(date) Starting $0 with params: ${PARAMS}"
 
+if [[ "${REPOSITORY}" = "DISABLED" ]]; then
+    DISABLE_SNAPSHOTS=true
+    echo "Info: Snapshots are disabled. Old indices will be rotated without being backed up."
+else
+    DISABLE_SNAPSHOTS=false
+fi
+
 INDICES=$(curl -s -k -XGET "${BASE_URL}/_cat/indices/${INDEX_PREFIX}*?h=index" | sort)
 
-SNAPSHOTS=$(curl -s -k -XGET "${BASE_URL}/_snapshot/${REPOSITORY}/_all" | jq -r '.snapshots[].snapshot' | sort)
+if [[ ! ${DISABLE_SNAPSHOTS} ]]; then
 
-# TODO: fail if snapshot count times out
-#if [ -z "$SNAPSHOTS" ]; then
-#    echo "ERROR: Could not retrieve snapshot list from the server. Aborting..." >/dev/stderr
-#    exit 1
-#fi
-
-# indices without snapshots
-TO_BACKUP=${INDICES[@]}
-for i in ${SNAPSHOTS[@]}
-do
-    TO_BACKUP=${TO_BACKUP/${i}/}
-done
-
-# exclude today's index (which is still bein written)
-TO_BACKUP=${TO_BACKUP/${INDEX_PREFIX}$(date +%Y.%m.%d)/}
-
-total=$(echo ${TO_BACKUP[@]} | wc -w)
-echo "Indices to backup: ${total}"
-
-n=0
-for index in ${TO_BACKUP[@]}
-do 
-    # --------------=[Snapshot Index]=------------------
-    ((n++))
-    echo "$n/${total}: Snapshotting ${index}..."
-    status=$(snapshotIndex ${index})
-    if [ "$status" != '{"accepted":true}' ]; then
-        echo "ERROR: ${index} snapshot failed!" >/dev/stderr
-	continue
-    fi
-
-    _start=0
-    #_end=$(getSnapshotStatus ${index} "total")
-    _end=$(getSnapshotStatus ${index} "shards_stats.total")
-    while [[ ${_start} -lt ${_end} ]]; do
-        sleep 2
-	#_start=$(getSnapshotStatus ${index} "done")
-	_start=$(getSnapshotStatus ${index} "shards_stats.done")
+    SNAPSHOTS=$(curl -s -k -XGET "${BASE_URL}/_snapshot/${REPOSITORY}/_all" | jq -r '.snapshots[].snapshot' | sort)
+    
+    # TODO: fail if snapshot count times out
+    #if [ -z "$SNAPSHOTS" ]; then
+    #    echo "ERROR: Could not retrieve snapshot list from the server. Aborting..." >/dev/stderr
+    #    exit 1
+    #fi
+    
+    # indices without snapshots
+    TO_BACKUP=${INDICES[@]}
+    for i in ${SNAPSHOTS[@]}
+    do
+        TO_BACKUP=${TO_BACKUP/${i}/}
     done
-done
+    
+    # exclude today's index (which is still being written)
+    TO_BACKUP=${TO_BACKUP/${INDEX_PREFIX}$(date +%Y.%m.%d)/}
+    
+    total=$(echo ${TO_BACKUP[@]} | wc -w)
+    echo "Indices to backup: ${total}"
+    
+    n=0
+    for index in ${TO_BACKUP[@]}
+    do 
+        # --------------=[Snapshot Index]=------------------
+        ((n++))
+        echo "$n/${total}: Snapshotting ${index}..."
+        status=$(snapshotIndex ${index})
+        if [ "$status" != '{"accepted":true}' ]; then
+            echo "ERROR: ${index} snapshot failed!" >/dev/stderr
+    	continue
+        fi
+    
+        _start=0
+        _end=$(getSnapshotStatus ${index} "shards_stats.total")
+        while [[ ${_start} -lt ${_end} ]]; do
+            sleep 2
+    	_start=$(getSnapshotStatus ${index} "shards_stats.done")
+        done
+    done
+
+fi # end if [[ ! ${DISABLE_SNAPSHOTS} ]]
 
 # --------------=[Delete Old Indices]=------------------
 index_max_age=$(date +%s --date="today - ${INDEX_MAX_AGE} days")
@@ -140,7 +149,7 @@ index_max_age=$(date +%s --date="today - ${INDEX_MAX_AGE} days")
 for index in ${INDICES[@]}
 do 
     # https://stackoverflow.com/questions/3685970/check-if-an-array-contains-a-value
-    if [[ "${SNAPSHOTS[@]}" =~ "${index}" ]]; then
+    if [[ "${SNAPSHOTS[@]}" =~ "${index}" ]] || [[ ${DISABLE_SNAPSHOTS} ]]; then
 
         index_creation=$(( $(getIndexMetadata ${index} "creation_date") / 1000 ))
         if [[ ${index_creation} -lt ${index_max_age} ]]; then
