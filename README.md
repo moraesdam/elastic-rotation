@@ -7,6 +7,6 @@ For a given cluster and a snapshot repository, make snapshots of daily indices
 Must be called with ALL the following parameters:
 
     --url           elasticsearch url, eg. https://<host>:<port>
-    --repository    snapshot repository
+    --repository    snapshot repository or 'DISABLED' to disable snapshotting
     --index-prefix  index pattern to be rotated
     --index-age     days to keep indices - the older ones will be deleted
